@@ -1,0 +1,10 @@
+build/
+host/build/
+*.dSYM/
+sdkconfig
+sdkconfig.old
+dependencies.lock
+managed_components/
+.pio/
+.cache/
+__pycache__/

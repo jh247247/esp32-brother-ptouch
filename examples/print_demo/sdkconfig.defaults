@@ -1,0 +1,4 @@
+# Nothing exotic is required: the driver needs only the USB Host Library and
+# FreeRTOS defaults. If your app also runs WiFi/display/TLS, budget internal
+# RAM carefully — usb_host_install claims ~20-40 KB of it.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y

@@ -1,0 +1,17 @@
+{
+  "name": "esp32-brother-ptouch",
+  "version": "0.1.0",
+  "description": "Brother P-touch label printer driver for ESP32 USB-OTG host (raster protocol + USB transport + print API). Verified on PT-P710BT.",
+  "keywords": "brother, ptouch, pt-p710bt, label printer, usb host, esp32-s3",
+  "repository": { "type": "git", "url": "https://github.com/jh247247/esp32-brother-ptouch.git" },
+  "authors": [{ "name": "Jack Hosemans", "maintainer": true }],
+  "license": "Apache-2.0",
+  "frameworks": ["arduino", "espidf"],
+  "platforms": ["espressif32"],
+  "headers": ["ptouch_raster.h", "ptouch_usb.h", "ptouch_print.h"],
+  "build": {
+    "srcDir": "src",
+    "includeDir": "include"
+  },
+  "export": { "exclude": ["host", "examples", ".github"] }
+}

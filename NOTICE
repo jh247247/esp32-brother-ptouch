@@ -1,0 +1,17 @@
+esp32-brother-ptouch
+Copyright 2026 Jack Hosemans
+
+This product includes software developed with reference to:
+
+- treideme/brother_pt (https://github.com/treideme/brother_pt), Apache-2.0.
+  Used as the hardware-verified reference implementation of the Brother
+  raster protocol; this component's command streams are validated byte-exact
+  against it (see host/gen_oracle.py).
+
+- packbits 0.6 by Mikhail Korobov (https://github.com/kmike/packbits), MIT.
+  ptouch_packbits_encode() in src/ptouch_raster.c is a C port of that
+  package's encoder state machine (including its run-boundary quirks), so
+  generated raster streams match the brother_pt reference byte-for-byte.
+
+Protocol facts are from the Brother "Raster Command Reference"
+(PT-E550W / P750W / P710BT).
