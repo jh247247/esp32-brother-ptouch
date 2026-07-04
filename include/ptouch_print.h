@@ -32,13 +32,19 @@ typedef struct {
     int  tape_mm;            /* installed tape width in mm (from the status reply) */
     bool mirror;             /* horizontal mirror (reverse feed-direction columns) */
     bool autocut;            /* cut after the job (default true) */
+    bool chain;              /* end with 0x0C (print, NO feed/cut) instead of
+                                0x1A — the next job prints back-to-back on the
+                                same strip, saving the inter-label leader.
+                                Use on every label of a batch except the last.
+                                Skips the trailing pad (there is no cut to pad
+                                against). */
     int  trailing_pad_dots;  /* blank columns before the cut (default 12) */
     int  timeout_ms;         /* per-chunk USB timeout (default 15000) */
 } ptouch_print_opts_t;
 
-#define PTOUCH_PRINT_OPTS_DEFAULT() (ptouch_print_opts_t){ \
-    .tape_mm = 12, .mirror = false, .autocut = true,        \
-    .trailing_pad_dots = 12, .timeout_ms = 15000 }
+#define PTOUCH_PRINT_OPTS_DEFAULT() (ptouch_print_opts_t){  \
+    .tape_mm = 12, .mirror = false, .autocut = true,         \
+    .chain = false, .trailing_pad_dots = 12, .timeout_ms = 15000 }
 
 /* Assemble the raster command stream into `out` (caller ptouch_buf_free()s it)
  * WITHOUT touching USB — usable with any transport, and host-testable.

@@ -43,14 +43,16 @@ bool ptouch_print_build_stream(const uint8_t *px, int w, int h,
         ptouch_build_raster_line(out, line);
     }
 
-    /* End padding — mirror-safe: the trailing (cut) edge is padded either way. */
-    if (o.trailing_pad_dots > 0) {
+    /* End padding — mirror-safe: the trailing (cut) edge is padded either way.
+     * Chained pages skip it: there is no cut to pad against, and padding would
+     * put a gap between back-to-back labels. */
+    if (!o.chain && o.trailing_pad_dots > 0) {
         uint8_t blank[PTOUCH_LINE_LENGTH_BYTES] = {0};
         for (int x = 0; x < o.trailing_pad_dots; x++)
             ptouch_build_raster_line(out, blank);
     }
 
-    ptouch_build_print(out, PTOUCH_PRINT_FEED);
+    ptouch_build_print(out, o.chain ? PTOUCH_PRINT_CHAIN : PTOUCH_PRINT_FEED);
     return !out->oom;
 }
 
