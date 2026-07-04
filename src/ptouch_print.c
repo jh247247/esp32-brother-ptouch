@@ -20,16 +20,34 @@ bool ptouch_print_build_stream(const uint8_t *px, int w, int h,
 
     const int offset = (PTOUCH_PRINT_HEAD_PINS - h) / 2;
 
+    /* Mechanical minimum: content shorter than min_length_dots is centered by
+     * splitting the shortfall into leading/trailing blank columns (the printer
+     * would otherwise append it all as a blank tail to reach the cutter). */
+    int lead_pad = 0, tail_pad = o.chain ? 0 : o.trailing_pad_dots;
+    if (tail_pad < 0) tail_pad = 0;
+    if (!o.chain && o.min_length_dots > 0) {
+        int shortfall = o.min_length_dots - (w + tail_pad);
+        if (shortfall > 0) {
+            lead_pad  = shortfall / 2;
+            tail_pad += shortfall - lead_pad;
+        }
+    }
+
     ptouch_build_invalidate(out);
     ptouch_build_init(out);
     ptouch_build_raster_mode(out);
     ptouch_build_enable_status_notification(out);
     ptouch_build_print_info(out, (uint8_t)o.tape_mm,
-                            (uint32_t)(w + o.trailing_pad_dots));
+                            (uint32_t)(lead_pad + w + tail_pad));
     ptouch_build_mode(out, o.autocut ? PTOUCH_MODE_AUTO_CUT : 0);
     ptouch_build_advanced_mode(out, PTOUCH_ADV_NO_CHAIN);
     ptouch_build_margin(out, 0);
     ptouch_build_compression_mode(out);
+
+    {   /* centering pad for short labels (see min_length_dots) */
+        uint8_t blank[PTOUCH_LINE_LENGTH_BYTES] = {0};
+        for (int x = 0; x < lead_pad; x++) ptouch_build_raster_line(out, blank);
+    }
 
     for (int x = 0; x < w; x++) {
         int sx = o.mirror ? (w - 1 - x) : x;
@@ -43,13 +61,12 @@ bool ptouch_print_build_stream(const uint8_t *px, int w, int h,
         ptouch_build_raster_line(out, line);
     }
 
-    /* End padding — mirror-safe: the trailing (cut) edge is padded either way.
-     * Chained pages skip it: there is no cut to pad against, and padding would
-     * put a gap between back-to-back labels. */
-    if (!o.chain && o.trailing_pad_dots > 0) {
+    /* End padding — cut-edge protection (trailing_pad_dots) plus the tail half
+     * of the min-length centering. Chained pages have neither: there is no cut
+     * to pad against, and padding would gap back-to-back labels. */
+    {
         uint8_t blank[PTOUCH_LINE_LENGTH_BYTES] = {0};
-        for (int x = 0; x < o.trailing_pad_dots; x++)
-            ptouch_build_raster_line(out, blank);
+        for (int x = 0; x < tail_pad; x++) ptouch_build_raster_line(out, blank);
     }
 
     ptouch_build_print(out, o.chain ? PTOUCH_PRINT_CHAIN : PTOUCH_PRINT_FEED);

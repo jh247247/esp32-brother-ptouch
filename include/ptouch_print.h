@@ -39,12 +39,26 @@ typedef struct {
                                 Skips the trailing pad (there is no cut to pad
                                 against). */
     int  trailing_pad_dots;  /* blank columns before the cut (default 12) */
+    int  min_length_dots;    /* mechanical minimum cut length: the cutter sits
+                                ~24.5 mm past the print head, so no cut piece
+                                can be shorter (the printer appends blank tape
+                                to reach the cutter). When > 0 and the content
+                                is shorter, blank columns are split evenly
+                                before/after the content so short labels come
+                                out CENTERED instead of content-then-long-tail.
+                                Suggested value: PTOUCH_MIN_CUT_DOTS. 0 = off
+                                (the printer still pads, just lopsidedly).
+                                Ignored for chain pages (no cut). */
     int  timeout_ms;         /* per-chunk USB timeout (default 15000) */
 } ptouch_print_opts_t;
 
+/* ~24.5 mm at 180 dpi (7.087 dots/mm) — PT-P710BT head-to-cutter distance. */
+#define PTOUCH_MIN_CUT_DOTS 174
+
 #define PTOUCH_PRINT_OPTS_DEFAULT() (ptouch_print_opts_t){  \
     .tape_mm = 12, .mirror = false, .autocut = true,         \
-    .chain = false, .trailing_pad_dots = 12, .timeout_ms = 15000 }
+    .chain = false, .trailing_pad_dots = 12,                 \
+    .min_length_dots = 0, .timeout_ms = 15000 }
 
 /* Assemble the raster command stream into `out` (caller ptouch_buf_free()s it)
  * WITHOUT touching USB — usable with any transport, and host-testable.

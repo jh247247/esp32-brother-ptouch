@@ -1,4 +1,4 @@
-version: "0.1.1"
+version: "0.1.2"
 description: "Brother P-touch label printer driver for ESP32 USB-OTG host (raster protocol + USB transport + print API). Verified on PT-P710BT."
 url: "https://github.com/jh247247/esp32-brother-ptouch"
 repository: "https://github.com/jh247247/esp32-brother-ptouch.git"
