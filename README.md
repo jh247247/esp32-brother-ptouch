@@ -44,7 +44,7 @@ dependencies:
 ```
 
 Do not use a moving branch for firmware builds. Commit the generated
-`dependencies.lock` so every build resolves the same component archive.
+`dependencies.lock` so every build resolves the same immutable source commit.
 
 ## Safe quickstart
 
