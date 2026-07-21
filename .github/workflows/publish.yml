@@ -1,0 +1,103 @@
+name: Publish component
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  host-gate:
+    name: Tagged host tests (${{ matrix.compiler }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Verify annotated tag, version, and main ancestry
+        run: |
+          version="$(sed -n 's/^version: "\(.*\)"/\1/p' idf_component.yml)"
+          test "v${version}" = "${GITHUB_REF_NAME}"
+          test "$(git cat-file -t "${GITHUB_REF_NAME}")" = tag
+          tag_commit="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
+          test "${tag_commit}" = "$(git rev-parse HEAD)"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "${tag_commit}" origin/main
+      - name: Run sanitizer-backed protocol suites
+        env:
+          CC: ${{ matrix.compiler }}
+        run: bash host/build.sh
+
+  idf-gate:
+    name: Tagged Git consumer / ESP-IDF 6.0.2 / ESP32-S3
+    runs-on: ubuntu-latest
+    container: espressif/idf@sha256:4453bbec7ce7a212cdf432726f36dca20e51b5f4f95fd86e546e169191a5448b
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Build a clean consumer from the public Git tag
+        run: |
+          . /opt/esp/idf/export.sh >/dev/null
+          tag_commit="$(git rev-parse HEAD)"
+          rm -rf /tmp/consumer
+          mkdir -p /tmp/consumer
+          cp -a examples/print_demo/. /tmp/consumer/
+          test -f /tmp/consumer/main/idf_component.yml
+          cd /tmp/consumer
+          idf.py set-target esp32s3
+          idf.py build
+          EXPECTED_TAG_COMMIT="${tag_commit}" python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          import yaml
+
+          lock = yaml.safe_load(Path("dependencies.lock").read_text())
+          dependency = lock["dependencies"]["esp32-brother-ptouch"]
+          source = dependency["source"]
+          assert source["type"] == "git", source
+          assert source["git"] == "https://github.com/jh247247/esp32-brother-ptouch.git", source
+          assert dependency["version"] == os.environ["EXPECTED_TAG_COMMIT"], dependency
+          PY
+
+  github-release:
+    name: GitHub prerelease
+    needs: [host-gate, idf-gate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Create source artifact and checksum
+        run: |
+          mkdir -p dist
+          git archive --format=tar.gz \
+            --prefix="esp32-brother-ptouch-${GITHUB_REF_NAME#v}/" \
+            -o "dist/esp32-brother-ptouch-${GITHUB_REF_NAME#v}.tar.gz" \
+            "${GITHUB_REF_NAME}"
+          sha256sum dist/*.tar.gz > dist/SHA256SUMS
+      - name: Attest source artifact
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: dist/esp32-brother-ptouch-*.tar.gz
+      - name: Create GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=()
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then prerelease+=(--prerelease); fi
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --verify-tag --generate-notes --title "${GITHUB_REF_NAME}" \
+            "${prerelease[@]}"

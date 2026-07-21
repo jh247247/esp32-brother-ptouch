@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Jack Hosemans
  *
- * ptouch_raster.h — Portable Brother P-touch raster protocol core (PT-P710BT).
+ * ptouch_raster.h — Portable Brother P-touch raster protocol core.
  *
  * Device-independent byte-level protocol: PackBits (TIFF) compression, the
  * Brother raster command stream builders, and 32-byte status-reply parsing.
@@ -25,9 +25,11 @@
 extern "C" {
 #endif
 
-/* Print head is 128 dots => 16 bytes per raster line. */
+/* Backward-compatible PT-P710BT constants. Model-aware code gets row length
+ * from ptouch_media_geometry(). */
 #define PTOUCH_PRINT_HEAD_PINS   128
 #define PTOUCH_LINE_LENGTH_BYTES 16
+#define PTOUCH_MAX_RASTER_BYTES  70 /* 560-dot PT-P900Wc head */
 #define PTOUCH_STATUS_LENGTH     32
 
 /* ---------------------------------------------------------------------------
@@ -82,6 +84,8 @@ bool ptouch_build_init(ptouch_buf_t *b);
 bool ptouch_build_status_request(ptouch_buf_t *b);
 /* Switch to raster mode (dynamic command mode): ESC i a 01 = 1B 69 61 01 */
 bool ptouch_build_raster_mode(ptouch_buf_t *b);
+/* Legacy graphics transfer selection: ESC i R 01 = 1B 69 52 01. */
+bool ptouch_build_legacy_raster_mode(ptouch_buf_t *b);
 /* Automatic status notification "notify": ESC i ! 00 = 1B 69 21 00 */
 bool ptouch_build_enable_status_notification(ptouch_buf_t *b);
 
@@ -93,6 +97,9 @@ bool ptouch_build_enable_status_notification(ptouch_buf_t *b);
  * => 1B 69 7A 84 00 <width> 00 <num_lines LE32> 00 00  (13 bytes) */
 bool ptouch_build_print_info(ptouch_buf_t *b, uint8_t media_width_mm,
                              uint32_t num_lines);
+bool ptouch_build_print_info_ex(ptouch_buf_t *b, uint8_t valid_flags,
+                                uint8_t media_width_mm, uint32_t num_lines,
+                                uint8_t starting_page);
 
 /* Various mode flags (ESC i M = 1B 69 4D <mode>). */
 #define PTOUCH_MODE_AUTO_CUT 0x40
@@ -106,6 +113,8 @@ bool ptouch_build_advanced_mode(ptouch_buf_t *b, uint8_t adv);
 
 /* Margin (feed) amount in dots: ESC i d = 1B 69 64 <dots LE16>. */
 bool ptouch_build_margin(ptouch_buf_t *b, uint16_t dots);
+bool ptouch_build_extended_margin(ptouch_buf_t *b, uint16_t dots,
+                                  uint8_t marker, uint8_t reserved);
 
 /* Select compression mode = TIFF/PackBits: 4D 02 */
 bool ptouch_build_compression_mode(ptouch_buf_t *b);
@@ -115,6 +124,11 @@ bool ptouch_build_compression_mode(ptouch_buf_t *b);
  * data. */
 bool ptouch_build_raster_line(ptouch_buf_t *b,
                               const uint8_t line[PTOUCH_LINE_LENGTH_BYTES]);
+/* Model-aware line builder. `blank_shortcut` permits the one-byte Z record;
+ * older framed printers instead require a normal G record even for zero rows. */
+bool ptouch_build_raster_line_ex(ptouch_buf_t *b, const uint8_t *line,
+                                 size_t line_len, bool packbits,
+                                 bool blank_shortcut);
 
 /* Print command. */
 #define PTOUCH_PRINT_FEED  0x1A  /* print + feed (eject / auto-cut) */
@@ -178,9 +192,9 @@ typedef struct {
 bool ptouch_parse_status(const uint8_t buf[PTOUCH_STATUS_LENGTH],
                          ptouch_status_t *out);
 
-/* Human-readable error string built from error_information_1/2 into `dst`
- * (NUL-terminated, truncated to dst_cap). Returns the number of distinct error
- * flags reported (0 => no error, dst is ""). */
+/* Human-readable terminal-error string built from error bits and status type
+ * into `dst` (NUL-terminated, truncated to dst_cap). Returns the number of
+ * distinct conditions reported (0 => no error, dst is ""). */
 int ptouch_status_error_string(const ptouch_status_t *st, char *dst, size_t dst_cap);
 
 #ifdef __cplusplus

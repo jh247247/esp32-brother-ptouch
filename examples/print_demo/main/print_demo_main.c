@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Jack Hosemans
  *
- * print_demo — plug a Brother PT-P710BT into the ESP32-S3's USB-C, get one
- * test-pattern label. Demonstrates the full flow: start the USB host, wait
- * for the printer, read its status (tape width), print, report.
+ * print_demo — plug an enabled Brother P-touch profile into an ESP32-S3 USB
+ * host, get one test-pattern label. Demonstrates the safe structured result:
+ * a submitted-but-unconfirmed label is never retried automatically.
  *
  * NOTE: once the USB host installs, the USB-Serial-JTAG console is GONE
  * (shared PHY). This demo logs over the default console until that moment;
@@ -12,6 +12,7 @@
  * button while the printer is unplugged.
  */
 #include <string.h>
+#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -52,9 +53,18 @@ static void on_usb_event(ptouch_usb_event_t evt,
         ESP_LOGI(TAG, "USB host up — plug in the printer");
         break;
     case PTOUCH_USB_EVT_ATTACHED:
-        ESP_LOGI(TAG, "printer attached: VID 0x%04X PID 0x%04X (%s speed)",
-                 info->vid, info->pid, info->speed);
+        ESP_LOGI(TAG, "printer attached: %s (VID 0x%04X PID 0x%04X, %s)",
+                 info->profile->name, info->vid, info->pid,
+                 ptouch_support_name(info->support));
         s_attached = true;
+        break;
+    case PTOUCH_USB_EVT_UNSUPPORTED:
+        ESP_LOGE(TAG, "printer refused: %s (%s)",
+                 info && info->profile ? info->profile->name : "unknown model",
+                 info ? ptouch_support_name(info->support) : "unknown");
+        break;
+    case PTOUCH_USB_EVT_ATTACH_FAILED:
+        ESP_LOGE(TAG, "printer USB interface could not be claimed");
         break;
     case PTOUCH_USB_EVT_DETACHED:
         ESP_LOGW(TAG, "printer detached");
@@ -71,32 +81,56 @@ void app_main(void)
     ptouch_usb_config_t cfg = PTOUCH_USB_CONFIG_DEFAULT();
     cfg.on_event = on_usb_event;
     cfg.boot_delay_ms = 1000;   /* last chance to read this log over USB serial */
+    /* Recipe-derived profiles are deliberately refused by default. For a
+     * supervised community hardware test only, explicitly set:
+     * cfg.allow_experimental_profiles = true; */
     ESP_ERROR_CHECK(ptouch_usb_start(&cfg));
 
     while (!s_attached) vTaskDelay(pdMS_TO_TICKS(250));
     vTaskDelay(pdMS_TO_TICKS(500));   /* let the printer settle after claim */
 
-    ptouch_status_t st;
-    int tape_mm = 12;
-    if (ptouch_usb_status(&st)) {
-        char errs[96];
-        int nerr = ptouch_status_error_string(&st, errs, sizeof errs);
-        ESP_LOGI(TAG, "status: media %u mm, type 0x%02X, model 0x%02X, errors: %s",
-                 st.media_width_mm, st.media_type, st.model, nerr ? errs : "none");
-        if (st.media_width_mm > 0) tape_mm = st.media_width_mm;
-        if (nerr) { ESP_LOGE(TAG, "printer reports errors — not printing"); return; }
-    } else {
-        ESP_LOGW(TAG, "no status reply; assuming 12mm tape");
+    ptouch_usb_ready_t ready;
+    if (!ptouch_usb_ready_snapshot(&ready)) {
+        ESP_LOGE(TAG, "printer is not idle-ready with supported media");
+        return;
+    }
+    char errors[96];
+    int error_count = ptouch_status_error_string(
+        &ready.status, errors, sizeof errors);
+    if (error_count) {
+        ESP_LOGE(TAG, "printer reports errors: %s", errors);
+        return;
     }
 
-    /* 76 dots covers 12 mm tape's printable area at 180 dpi (7.087 dots/mm). */
-    const int W = 360, H = (tape_mm >= 24) ? 128 : 76;
-    static uint8_t px[360 * 128];
+    const int W = 180;
+    const int H = ready.geometry.printable_dots;
+    uint8_t *px = calloc((size_t)W, (size_t)H);
+    if (!px) {
+        ESP_LOGE(TAG, "bitmap allocation failed");
+        return;
+    }
     make_test_pattern(px, W, H);
 
-    ptouch_print_opts_t opts = PTOUCH_PRINT_OPTS_DEFAULT();
-    opts.tape_mm = tape_mm;
-    int rc = ptouch_print_bitmap(px, W, H, &opts);
-    if (rc == 0) ESP_LOGI(TAG, "printed + cut (%dx%d on %dmm tape)", W, H, tape_mm);
-    else         ESP_LOGE(TAG, "print failed rc=%d", rc);
+    ptouch_print_opts_t opts;
+    if (!ptouch_print_opts_init(ready.target.profile,
+                                ready.status.media_width_mm, &opts)) {
+        ESP_LOGE(TAG, "profile-aware print options rejected the media");
+        free(px);
+        return;
+    }
+    ptouch_usb_print_result_t result =
+        ptouch_usb_print_bitmap(px, W, H, &opts, 60000);
+    free(px);
+
+    if (result.transfer_rc == PTOUCH_USB_TRANSFER_OK &&
+        result.completion_rc == PTOUCH_USB_COMPLETION_OK) {
+        ESP_LOGI(TAG, "printed and mechanically completed");
+    } else if (result.stream_submitted) {
+        ESP_LOGE(TAG,
+                 "label may have printed (transfer=%d completion=%d); DO NOT RETRY — inspect output, then clear quarantine deliberately",
+                 result.transfer_rc, result.completion_rc);
+    } else {
+        ESP_LOGE(TAG, "safe zero-output rejection (transfer=%d completion=%d)",
+                 result.transfer_rc, result.completion_rc);
+    }
 }

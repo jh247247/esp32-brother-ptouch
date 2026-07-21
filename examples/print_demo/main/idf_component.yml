@@ -1,0 +1,4 @@
+dependencies:
+  esp32-brother-ptouch:
+    git: https://github.com/jh247247/esp32-brother-ptouch.git
+    version: v0.2.0-beta.1

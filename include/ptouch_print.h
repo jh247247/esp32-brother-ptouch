@@ -1,76 +1,90 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Jack Hosemans
  *
- * ptouch_print.h — assemble + send a full P-touch print job from a bitmap.
- *
- * Takes a plain row-major bitmap (1 byte per pixel, non-zero = ink, width =
- * label length along the tape, height = across the tape ≤ 128) and produces
- * the complete raster command stream — invalidate → init → raster mode →
- * status notifications → print info → auto-cut mode → margin(0) → compression
- * → one PackBits raster line per bitmap COLUMN (the print head is
- * perpendicular to feed) with the rows centered on the 128-dot head — then
- * prints it over ptouch_usb.
- *
- * Behaviors verified on a PT-P710BT with 12 mm TZe tape:
- *  - trailing_pad_dots blank columns are appended before the cut; with
- *    margin(0) the cutter otherwise shaves ~1 mm off the last glyph
- *    (12 dots ≈ 1.7 mm at 180 dpi / 7.087 dots/mm).
- *  - mirror reverses the columns (for wrap-around / wire labels).
+ * Profile-aware Brother P-touch raster job assembly.
  */
 #ifndef PTOUCH_PRINT_H
 #define PTOUCH_PRINT_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
+
+#include "ptouch_model.h"
 #include "ptouch_raster.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct {
-    int  tape_mm;            /* installed tape width in mm (from the status reply) */
-    bool mirror;             /* horizontal mirror (reverse feed-direction columns) */
-    bool autocut;            /* cut after the job (default true) */
-    bool chain;              /* end with 0x0C (print, NO feed/cut) instead of
-                                0x1A — the next job prints back-to-back on the
-                                same strip, saving the inter-label leader.
-                                Use on every label of a batch except the last.
-                                Skips the trailing pad (there is no cut to pad
-                                against). */
-    int  trailing_pad_dots;  /* blank columns before the cut (default 12) */
-    int  min_length_dots;    /* mechanical minimum cut length: the cutter sits
-                                ~24.5 mm past the print head, so no cut piece
-                                can be shorter (the printer appends blank tape
-                                to reach the cutter). When > 0 and the content
-                                is shorter, blank columns are split evenly
-                                before/after the content so short labels come
-                                out CENTERED instead of content-then-long-tail.
-                                Suggested value: PTOUCH_MIN_CUT_DOTS. 0 = off
-                                (the printer still pads, just lopsidedly).
-                                Ignored for chain pages (no cut). */
-    int  timeout_ms;         /* per-chunk USB timeout (default 15000) */
+typedef struct ptouch_print_opts {
+    int  tape_mm;            /* installed tape width from a fresh status reply */
+    bool mirror;             /* reverse feed-direction pixels */
+    bool autocut;            /* request a cut after the job (default true) */
+    bool chain;              /* suppress final feed only when profile-validated */
+    int  trailing_pad_dots;  /* 180-dpi logical blank columns before final feed */
+    int  min_length_dots;    /* 180-dpi logical minimum; 0 disables centering */
+    int  timeout_ms;         /* per-transfer timeout */
 } ptouch_print_opts_t;
 
-/* ~24.5 mm at 180 dpi (7.087 dots/mm) — PT-P710BT head-to-cutter distance. */
 #define PTOUCH_MIN_CUT_DOTS 174
 
+/* v0.1 compatibility defaults for PT-P710BT. New model-aware code should use
+ * ptouch_print_opts_init(), which applies the selected profile's cut geometry. */
 #define PTOUCH_PRINT_OPTS_DEFAULT() (ptouch_print_opts_t){  \
-    .tape_mm = 12, .mirror = false, .autocut = true,         \
-    .chain = false, .trailing_pad_dots = 12,                 \
-    .min_length_dots = 0, .timeout_ms = 15000 }
+    .tape_mm = 12, .mirror = false, .autocut = true,        \
+    .chain = false,                                          \
+    .trailing_pad_dots = 12, .min_length_dots = 0,          \
+    .timeout_ms = 15000 }
 
-/* Assemble the raster command stream into `out` (caller ptouch_buf_free()s it)
- * WITHOUT touching USB — usable with any transport, and host-testable.
- * px is w*h bytes, row-major, non-zero = ink. Requires 0 < h <= 128.
- * Returns false on bad args or allocation failure. */
+/* Initialize safe, profile-aware defaults for one installed tape width. */
+bool ptouch_print_opts_init(const ptouch_model_profile_t *profile,
+                            int tape_mm, ptouch_print_opts_t *out);
+
+/* A flattened command stream plus exact command/raster frame boundaries.
+ * Legacy profiles use these boundaries as individual USB bulk transfers;
+ * P710 retains its verified coalesced transfer policy. */
+typedef struct ptouch_print_job {
+    ptouch_buf_t stream;
+    size_t *frame_ends;       /* monotonically increasing offsets into stream */
+    size_t frame_count;
+    size_t frame_capacity;
+    const ptouch_model_profile_t *profile;
+    int tape_mm;
+    uint32_t attachment_generation;
+} ptouch_print_job_t;
+
+void ptouch_print_job_init(ptouch_print_job_t *job);
+void ptouch_print_job_free(ptouch_print_job_t *job);
+bool ptouch_print_job_frames_valid(const ptouch_print_job_t *job);
+
+/* The bitmap is at the profile's native head/feed DPI, row-major, one
+ * byte/pixel. Height must not exceed geometry.printable_dots. Padding and
+ * minimum-length options remain 180-dpi logical values for API compatibility. */
+bool ptouch_print_build_job_for_model(
+    const ptouch_model_profile_t *profile,
+    const uint8_t *px, int w, int h,
+    const ptouch_print_opts_t *opts,
+    ptouch_print_job_t *out);
+
+/* Host-testable flattened form. Frame metadata is discarded. */
+bool ptouch_print_build_stream_for_model(
+    const ptouch_model_profile_t *profile,
+    const uint8_t *px, int w, int h,
+    const ptouch_print_opts_t *opts,
+    ptouch_buf_t *out);
+
+/* Backward-compatible wrapper: deliberately remains PT-P710BT-only and must
+ * continue producing the v0.1.x stream byte-for-byte. */
 bool ptouch_print_build_stream(const uint8_t *px, int w, int h,
                                const ptouch_print_opts_t *opts,
                                ptouch_buf_t *out);
 
-/* Build the stream and send it via ptouch_usb_bulk_out().
- * 0 = printed; -10 = build failed (args/alloc); other negatives = USB error
- * codes from ptouch_usb_bulk_out (-2 = no printer attached). */
+/* Legacy flattened result. Prefer ptouch_usb_print_bitmap(), whose structured
+ * result distinguishes zero-output rejection from a possibly printed label. */
+#if defined(__GNUC__)
+__attribute__((deprecated("use ptouch_usb_print_bitmap for a structured result")))
+#endif
 int ptouch_print_bitmap(const uint8_t *px, int w, int h,
                         const ptouch_print_opts_t *opts);
 
