@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing protected annotated tag to publish
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -16,17 +22,21 @@ jobs:
       fail-fast: false
       matrix:
         compiler: [gcc, clang]
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - name: Check out tagged source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          ref: ${{ inputs.tag || github.ref_name }}
           fetch-depth: 0
+          fetch-tags: true
       - name: Verify annotated tag, version, and main ancestry
         run: |
           version="$(sed -n 's/^version: "\(.*\)"/\1/p' idf_component.yml)"
-          test "v${version}" = "${GITHUB_REF_NAME}"
-          test "$(git cat-file -t "${GITHUB_REF_NAME}")" = tag
-          tag_commit="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
+          test "v${version}" = "${RELEASE_TAG}"
+          test "$(git cat-file -t "${RELEASE_TAG}")" = tag
+          tag_commit="$(git rev-parse "${RELEASE_TAG}^{commit}")"
           test "${tag_commit}" = "$(git rev-parse HEAD)"
           git fetch --no-tags origin main
           git merge-base --is-ancestor "${tag_commit}" origin/main
@@ -39,13 +49,20 @@ jobs:
     name: Tagged Git consumer / ESP-IDF 6.0.2 / ESP32-S3
     runs-on: ubuntu-latest
     container: espressif/idf@sha256:4453bbec7ce7a212cdf432726f36dca20e51b5f4f95fd86e546e169191a5448b
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - name: Check out tagged source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+          fetch-tags: true
       - name: Build a clean consumer from the public Git tag
         run: |
           . /opt/esp/idf/export.sh >/dev/null
-          tag_commit="$(git rev-parse HEAD)"
+          tag_object="$(git rev-parse "${RELEASE_TAG}")"
+          test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "$(git rev-parse HEAD)"
           rm -rf /tmp/consumer
           mkdir -p /tmp/consumer
           cp -a examples/print_demo/. /tmp/consumer/
@@ -53,7 +70,7 @@ jobs:
           cd /tmp/consumer
           idf.py set-target esp32s3
           idf.py build
-          EXPECTED_TAG_COMMIT="${tag_commit}" python3 - <<'PY'
+          EXPECTED_TAG_OBJECT="${tag_object}" python3 - <<'PY'
           import os
           from pathlib import Path
 
@@ -64,7 +81,7 @@ jobs:
           source = dependency["source"]
           assert source["type"] == "git", source
           assert source["git"] == "https://github.com/jh247247/esp32-brother-ptouch.git", source
-          assert dependency["version"] == os.environ["EXPECTED_TAG_COMMIT"], dependency
+          assert dependency["version"] == os.environ["EXPECTED_TAG_OBJECT"], dependency
           PY
 
   github-release:
@@ -75,18 +92,22 @@ jobs:
       contents: write
       id-token: write
       attestations: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - name: Check out tagged source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          ref: ${{ inputs.tag || github.ref_name }}
           fetch-depth: 0
+          fetch-tags: true
       - name: Create source artifact and checksum
         run: |
           mkdir -p dist
           git archive --format=tar.gz \
-            --prefix="esp32-brother-ptouch-${GITHUB_REF_NAME#v}/" \
-            -o "dist/esp32-brother-ptouch-${GITHUB_REF_NAME#v}.tar.gz" \
-            "${GITHUB_REF_NAME}"
+            --prefix="esp32-brother-ptouch-${RELEASE_TAG#v}/" \
+            -o "dist/esp32-brother-ptouch-${RELEASE_TAG#v}.tar.gz" \
+            "${RELEASE_TAG}"
           sha256sum dist/*.tar.gz > dist/SHA256SUMS
       - name: Attest source artifact
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
@@ -97,7 +118,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           prerelease=()
-          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then prerelease+=(--prerelease); fi
-          gh release create "${GITHUB_REF_NAME}" dist/* \
-            --verify-tag --generate-notes --title "${GITHUB_REF_NAME}" \
+          if [[ "${RELEASE_TAG}" == *-* ]]; then prerelease+=(--prerelease); fi
+          gh release create "${RELEASE_TAG}" dist/* \
+            --verify-tag --generate-notes --title "${RELEASE_TAG}" \
             "${prerelease[@]}"
