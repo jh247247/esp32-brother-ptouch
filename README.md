@@ -33,15 +33,8 @@ claims have been removed until they are proven.
 
 ## Install
 
-Use the exact beta from the ESP Component Registry in your project's
-`main/idf_component.yml`:
-
-```yaml
-dependencies:
-  jh247247/esp32-brother-ptouch: "==0.2.0-beta.1"
-```
-
-The immutable Git tag is an equivalent source fallback:
+Pin the protected GitHub release tag through ESP-IDF's Component Manager in
+your project's `main/idf_component.yml`:
 
 ```yaml
 dependencies:

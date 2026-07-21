@@ -42,7 +42,7 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: Pack registry component
+      - name: Pack distributable component
         run: |
           . /opt/esp/idf/export.sh >/dev/null
           compote component pack --name esp32-brother-ptouch --dest-dir dist
@@ -51,7 +51,7 @@ jobs:
           . /opt/esp/idf/export.sh >/dev/null
           archive="$(find dist -maxdepth 1 -type f -name '*.tgz' -print -quit)"
           test -n "${archive}"
-          component_root=/tmp/consumer/components/jh247247__esp32-brother-ptouch
+          component_root=/tmp/consumer/components/esp32-brother-ptouch
           mkdir -p "${component_root}"
           tar -xzf "${archive}" -C "${component_root}"
           cp -a "${component_root}/examples/print_demo/." /tmp/consumer/
