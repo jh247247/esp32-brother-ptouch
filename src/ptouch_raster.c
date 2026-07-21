@@ -37,12 +37,20 @@ bool ptouch_buf_reserve(ptouch_buf_t *b, size_t extra)
     if (b->oom) {
         return false;
     }
-    if (b->len + extra <= b->cap) {
-        return true;
+    if (extra > SIZE_MAX - b->len) {
+        b->oom = true;
+        return false;
     }
     size_t need = b->len + extra;
+    if (need <= b->cap) {
+        return true;
+    }
     size_t newcap = b->cap ? b->cap : 128;
     while (newcap < need) {
+        if (newcap > SIZE_MAX / 2) {
+            newcap = need;
+            break;
+        }
         newcap *= 2;
     }
     uint8_t *p = (uint8_t *)realloc(b->data, newcap);
@@ -93,7 +101,8 @@ size_t ptouch_packbits_max_encoded_size(size_t src_len)
      * sustained worst case is ~4/3, but 2n is a safe simple ceiling), and any
      * RLE run of length R>=2 emits only 2 bytes for R inputs (<=1/byte). The
      * len==1 special case emits exactly 2 bytes. */
-    return 2 * src_len + 2;
+    if (src_len > (SIZE_MAX - 2U) / 2U) return SIZE_MAX;
+    return 2U * src_len + 2U;
 }
 
 int ptouch_packbits_encode(const uint8_t *data, size_t len,
@@ -253,6 +262,12 @@ bool ptouch_build_raster_mode(ptouch_buf_t *b)
     return ptouch_buf_append(b, cmd, sizeof cmd);
 }
 
+bool ptouch_build_legacy_raster_mode(ptouch_buf_t *b)
+{
+    static const uint8_t cmd[] = { 0x1B, 0x69, 0x52, 0x01 };
+    return ptouch_buf_append(b, cmd, sizeof cmd);
+}
+
 bool ptouch_build_enable_status_notification(ptouch_buf_t *b)
 {
     static const uint8_t cmd[] = { 0x1B, 0x69, 0x21, 0x00 };
@@ -262,9 +277,16 @@ bool ptouch_build_enable_status_notification(ptouch_buf_t *b)
 bool ptouch_build_print_info(ptouch_buf_t *b, uint8_t media_width_mm,
                              uint32_t num_lines)
 {
+    return ptouch_build_print_info_ex(b, 0x84, media_width_mm, num_lines, 0);
+}
+
+bool ptouch_build_print_info_ex(ptouch_buf_t *b, uint8_t valid_flags,
+                                uint8_t media_width_mm, uint32_t num_lines,
+                                uint8_t starting_page)
+{
     uint8_t cmd[13] = {
         0x1B, 0x69, 0x7A,   /* ESC i z */
-        0x84,               /* n1: valid flags (media width + recover) */
+        valid_flags,        /* n1: validity/recovery flags */
         0x00,               /* n2: media type */
         media_width_mm,     /* n3: media width (mm) */
         0x00,               /* n4: media length */
@@ -272,7 +294,7 @@ bool ptouch_build_print_info(ptouch_buf_t *b, uint8_t media_width_mm,
         (uint8_t)((num_lines >> 8) & 0xFF),
         (uint8_t)((num_lines >> 16) & 0xFF),
         (uint8_t)((num_lines >> 24) & 0xFF),
-        0x00,               /* n9: starting page */
+        starting_page,      /* n9: starting page */
         0x00,               /* n10 */
     };
     return ptouch_buf_append(b, cmd, sizeof cmd);
@@ -300,6 +322,18 @@ bool ptouch_build_margin(ptouch_buf_t *b, uint16_t dots)
     return ptouch_buf_append(b, cmd, sizeof cmd);
 }
 
+bool ptouch_build_extended_margin(ptouch_buf_t *b, uint16_t dots,
+                                  uint8_t marker, uint8_t reserved)
+{
+    uint8_t cmd[7] = {
+        0x1B, 0x69, 0x64,
+        (uint8_t)(dots & 0xFF),
+        (uint8_t)((dots >> 8) & 0xFF),
+        marker, reserved,
+    };
+    return ptouch_buf_append(b, cmd, sizeof cmd);
+}
+
 bool ptouch_build_compression_mode(ptouch_buf_t *b)
 {
     static const uint8_t cmd[] = { 0x4D, 0x02 };
@@ -309,33 +343,48 @@ bool ptouch_build_compression_mode(ptouch_buf_t *b)
 bool ptouch_build_raster_line(ptouch_buf_t *b,
                               const uint8_t line[PTOUCH_LINE_LENGTH_BYTES])
 {
+    return ptouch_build_raster_line_ex(b, line, PTOUCH_LINE_LENGTH_BYTES,
+                                       true, true);
+}
+
+bool ptouch_build_raster_line_ex(ptouch_buf_t *b, const uint8_t *line,
+                                 size_t line_len, bool packbits,
+                                 bool blank_shortcut)
+{
+    if (!b || !line || line_len == 0 ||
+        line_len > PTOUCH_MAX_RASTER_BYTES) {
+        return false;
+    }
     bool all_zero = true;
-    for (int i = 0; i < PTOUCH_LINE_LENGTH_BYTES; i++) {
+    for (size_t i = 0; i < line_len; i++) {
         if (line[i]) {
             all_zero = false;
             break;
         }
     }
-    if (all_zero) {
+    if (all_zero && packbits && blank_shortcut) {
         return ptouch_buf_append_byte(b, 0x5A); /* 'Z' empty line */
     }
 
-    uint8_t packed[PTOUCH_LINE_LENGTH_BYTES * 2 + 4];
-    int n = ptouch_packbits_encode(line, PTOUCH_LINE_LENGTH_BYTES,
-                                   packed, sizeof packed);
-    if (n < 0) {
-        return false;
+    uint8_t packed[PTOUCH_MAX_RASTER_BYTES * 2 + 2];
+    const uint8_t *payload = line;
+    size_t payload_len = line_len;
+    if (packbits) {
+        int n = ptouch_packbits_encode(line, line_len, packed, sizeof packed);
+        if (n < 0) return false;
+        payload = packed;
+        payload_len = (size_t)n;
     }
     if (!ptouch_buf_append_byte(b, 0x47)) {          /* 'G' */
         return false;
     }
-    if (!ptouch_buf_append_byte(b, (uint8_t)(n & 0xFF))) {
+    if (!ptouch_buf_append_byte(b, (uint8_t)(payload_len & 0xFF))) {
         return false;
     }
-    if (!ptouch_buf_append_byte(b, (uint8_t)((n >> 8) & 0xFF))) {
+    if (!ptouch_buf_append_byte(b, (uint8_t)((payload_len >> 8) & 0xFF))) {
         return false;
     }
-    return ptouch_buf_append(b, packed, (size_t)n);
+    return ptouch_buf_append(b, payload, payload_len);
 }
 
 bool ptouch_build_print(ptouch_buf_t *b, uint8_t feed_or_chain)
@@ -371,12 +420,23 @@ bool ptouch_parse_status(const uint8_t buf[PTOUCH_STATUS_LENGTH],
     return true;
 }
 
+static void append_status_error(char *dst, size_t dst_cap, size_t *used,
+                                int *count, const char *message)
+{
+    if (*count > 0 && *used + 1 < dst_cap) dst[(*used)++] = '|';
+    for (size_t i = 0; message[i] && *used + 1 < dst_cap; i++) {
+        dst[(*used)++] = message[i];
+    }
+    (*count)++;
+}
+
 int ptouch_status_error_string(const ptouch_status_t *st, char *dst, size_t dst_cap)
 {
-    if (dst_cap == 0) {
+    if (!dst || dst_cap == 0) {
         return 0;
     }
     dst[0] = '\0';
+    if (!st || !st->valid) return 0;
     int count = 0;
     size_t used = 0;
 
@@ -394,16 +454,29 @@ int ptouch_status_error_string(const ptouch_status_t *st, char *dst, size_t dst_
         uint8_t reg = (tbl[i].reg == 1) ? st->error_information_1
                                         : st->error_information_2;
         if (reg & tbl[i].bit) {
-            const char *m = tbl[i].msg;
-            if (count > 0 && used + 1 < dst_cap) {
-                dst[used++] = '|';
-            }
-            size_t mlen = strlen(m);
-            for (size_t k = 0; k < mlen && used + 1 < dst_cap; k++) {
-                dst[used++] = m[k];
-            }
-            count++;
+            append_status_error(dst, dst_cap, &used, &count, tbl[i].msg);
         }
+    }
+
+    /* Brother can report a terminal status type without setting any mapped
+     * bit. Never let that zero-bit frame render as ready. */
+    if (st->status_type == PTOUCH_ST_ERROR_OCCURRED && count == 0) {
+        append_status_error(dst, dst_cap, &used, &count,
+                            "printer error (status 0x02)");
+    }
+    if (st->status_type == PTOUCH_ST_TURNED_OFF) {
+        append_status_error(dst, dst_cap, &used, &count, "printer turned off");
+    }
+    if (st->status_type == PTOUCH_ST_NOTIFICATION &&
+        st->notification_number == 0x01 &&
+        !(st->error_information_2 & PTOUCH_ERR2_COVER_OPEN)) {
+        append_status_error(dst, dst_cap, &used, &count, "cover open");
+    }
+    if (st->status_type == PTOUCH_ST_PHASE_CHANGE &&
+        st->phase_type == 0x01 && st->phase_number == 0x0014 &&
+        !(st->error_information_2 & PTOUCH_ERR2_COVER_OPEN)) {
+        append_status_error(dst, dst_cap, &used, &count,
+                            "cover open while receiving");
     }
     dst[used < dst_cap ? used : dst_cap - 1] = '\0';
     return count;

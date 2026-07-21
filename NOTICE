@@ -12,6 +12,22 @@ This product includes software developed with reference to:
   ptouch_packbits_encode() in src/ptouch_raster.c is a C port of that
   package's encoder state machine (including its run-boundary quirks), so
   generated raster streams match the brother_pt reference byte-for-byte.
+  The complete required MIT notice is included in THIRD_PARTY_NOTICES.md.
 
 Protocol facts are from the Brother "Raster Command Reference"
 (PT-E550W / P750W / P710BT).
+
+PT-1950 setup semantics were independently determined from Brother's official
+PT-1950/1960 Windows driver 6.02.00.00 (2010-03-02): package
+pd1950w550axpus.exe SHA-256
+76bb2706e0412f47989ab223de34da60c23f84424b81f17e1377b4e40c60f9e9 and
+pt19v.dll SHA-256
+ee594b196e200a2bdc35e867963b557a09afa6cf46d8e9b85cd9deb0e12c2537.
+Only protocol interoperability facts are expressed here; no proprietary
+driver code or data is copied or linked.
+
+The model catalog also independently expresses USB identities and semantic
+interoperability facts checked against ptouch-print commit
+f7cce686099df3034fc41e427ab14358277234fe (GPL-3.0-or-later). No ptouch-print
+source, flag layout, comments, or data structure is copied into or linked with
+this Apache-2.0 component.

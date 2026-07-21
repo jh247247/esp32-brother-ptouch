@@ -1,0 +1,109 @@
+name: Publish component
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  host-gate:
+    name: Tagged host tests (${{ matrix.compiler }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Verify annotated tag, version, and main ancestry
+        run: |
+          version="$(sed -n 's/^version: "\(.*\)"/\1/p' idf_component.yml)"
+          test "v${version}" = "${GITHUB_REF_NAME}"
+          test "$(git cat-file -t "${GITHUB_REF_NAME}")" = tag
+          tag_commit="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
+          test "${tag_commit}" = "$(git rev-parse HEAD)"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "${tag_commit}" origin/main
+      - name: Run sanitizer-backed protocol suites
+        env:
+          CC: ${{ matrix.compiler }}
+        run: bash host/build.sh
+
+  idf-gate:
+    name: Tagged package / ESP-IDF 6.0.2 / ESP32-S3
+    runs-on: ubuntu-latest
+    container: espressif/idf@sha256:4453bbec7ce7a212cdf432726f36dca20e51b5f4f95fd86e546e169191a5448b
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Pack registry component
+        run: compote component pack --name esp32-brother-ptouch --dest-dir dist
+      - name: Build example from the exact packaged tag
+        run: |
+          archive="$(find dist -maxdepth 1 -type f -name '*.tgz' -print -quit)"
+          test -n "${archive}"
+          component_root=/tmp/consumer/components/jh247247__esp32-brother-ptouch
+          mkdir -p "${component_root}"
+          tar -xzf "${archive}" -C "${component_root}"
+          cp -a "${component_root}/examples/print_demo/." /tmp/consumer/
+          test -f /tmp/consumer/main/idf_component.yml
+          cd /tmp/consumer
+          idf.py set-target esp32s3
+          idf.py build
+
+  github-release:
+    name: GitHub prerelease
+    needs: [host-gate, idf-gate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Create source artifact and checksum
+        run: |
+          mkdir -p dist
+          git archive --format=tar.gz \
+            --prefix="esp32-brother-ptouch-${GITHUB_REF_NAME#v}/" \
+            -o "dist/esp32-brother-ptouch-${GITHUB_REF_NAME#v}.tar.gz" \
+            "${GITHUB_REF_NAME}"
+          sha256sum dist/*.tar.gz > dist/SHA256SUMS
+      - name: Attest source artifact
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: dist/esp32-brother-ptouch-*.tar.gz
+      - name: Create GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=()
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then prerelease+=(--prerelease); fi
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --verify-tag --generate-notes --title "${GITHUB_REF_NAME}" \
+            "${prerelease[@]}"
+
+  registry:
+    name: ESP Component Registry
+    needs: [host-gate, idf-gate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Publish exact tag to ESP Component Registry
+        uses: espressif/upload-components-ci-action@2ce17d73e35473317c1419dbd4f007aacb593040 # v2.2.1
+        with:
+          components: "esp32-brother-ptouch: ."
+          namespace: "jh247247"

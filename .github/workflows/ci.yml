@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-tests:
+    name: Host tests (${{ matrix.compiler }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Run sanitizer-backed protocol suites
+        env:
+          CC: ${{ matrix.compiler }}
+        run: bash host/build.sh
+      - name: Check distributable public headers
+        run: |
+          test -f README.md
+          test -f LICENSE
+          test -f THIRD_PARTY_NOTICES.md
+          test -f examples/print_demo/CMakeLists.txt
+          ! rg -n 'Itembase|PTOUCH_VALIDATION_|can_cloud_print' include src README.md
+
+  esp-idf-build:
+    name: Packaged example / ESP-IDF 6.0.2 / ESP32-S3
+    runs-on: ubuntu-latest
+    container: espressif/idf@sha256:4453bbec7ce7a212cdf432726f36dca20e51b5f4f95fd86e546e169191a5448b
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Pack registry component
+        run: compote component pack --name esp32-brother-ptouch --dest-dir dist
+      - name: Build example from the packaged component
+        run: |
+          archive="$(find dist -maxdepth 1 -type f -name '*.tgz' -print -quit)"
+          test -n "${archive}"
+          component_root=/tmp/consumer/components/jh247247__esp32-brother-ptouch
+          mkdir -p "${component_root}"
+          tar -xzf "${archive}" -C "${component_root}"
+          cp -a "${component_root}/examples/print_demo/." /tmp/consumer/
+          test -f /tmp/consumer/main/idf_component.yml
+          cd /tmp/consumer
+          idf.py set-target esp32s3
+          idf.py build

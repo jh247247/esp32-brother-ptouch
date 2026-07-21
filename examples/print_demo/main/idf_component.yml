@@ -1,0 +1,3 @@
+dependencies:
+  jh247247/esp32-brother-ptouch:
+    version: "==0.2.0-beta.1"

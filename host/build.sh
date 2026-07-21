@@ -21,7 +21,7 @@ CFLAGS=(
     -Wall -Wextra -Werror
     -Wshadow -Wconversion -Wsign-conversion
     -O2 -g
-    -fsanitize=address,undefined
+    "-fsanitize=address,undefined"
     -fno-omit-frame-pointer
     -I"$HERE/../include"
 )
@@ -31,11 +31,41 @@ if [[ ! -f "$HERE/oracle_generated.h" ]]; then
     exit 2
 fi
 
-echo "== compiling =="
+echo "== compiling raster oracle =="
 "$CC" "${CFLAGS[@]}" \
     "$HERE/../src/ptouch_raster.c" \
     "$HERE/test_ptouch.c" \
     -o "$OUT/test_ptouch"
 
-echo "== running =="
+echo "== compiling model/profile suite =="
+"$CC" "${CFLAGS[@]}" \
+    -DPTOUCH_HOST_BUILD \
+    "$HERE/../src/ptouch_model.c" \
+    "$HERE/../src/ptouch_usb_descriptor.c" \
+    "$HERE/../src/ptouch_raster.c" \
+    "$HERE/../src/ptouch_print.c" \
+    "$HERE/test_models.c" \
+    -o "$OUT/test_models"
+
+echo "== compiling completion suite =="
+"$CC" "${CFLAGS[@]}" \
+    "$HERE/../src/ptouch_completion.c" \
+    "$HERE/../src/ptouch_raster.c" \
+    "$HERE/test_completion.c" \
+    -o "$OUT/test_completion"
+
+echo "== running raster oracle =="
 "$OUT/test_ptouch"
+
+echo "== running model/profile suite =="
+ASAN_OPTIONS="detect_leaks=0:halt_on_error=1" \
+UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1" \
+    "$OUT/test_models"
+
+echo "== running completion suite =="
+ASAN_OPTIONS="detect_leaks=0:halt_on_error=1" \
+UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1" \
+    "$OUT/test_completion"
+
+echo "== running USB source-contract suite =="
+python3 "$HERE/test_usb_source_contract.py"
