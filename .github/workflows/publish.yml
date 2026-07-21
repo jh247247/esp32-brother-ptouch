@@ -61,6 +61,10 @@ jobs:
       - name: Build a clean consumer from the public Git tag
         run: |
           . /opt/esp/idf/export.sh >/dev/null
+          # actions/checkout registers this path under its temporary HOME.
+          # Container run steps use a different HOME, so Git requires the
+          # workspace to be trusted again before resolving the annotated tag.
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
           tag_object="$(git rev-parse "${RELEASE_TAG}")"
           test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "$(git rev-parse HEAD)"
           rm -rf /tmp/consumer
