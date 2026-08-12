@@ -34,6 +34,14 @@ static size_t count_exact_frames(const ptouch_print_job_t *job,
     return count;
 }
 
+static bool frame_is_byte(const ptouch_print_job_t *job, size_t index,
+                          uint8_t value)
+{
+    size_t start = index ? job->frame_ends[index - 1] : 0;
+    size_t end = job->frame_ends[index];
+    return end == start + 1 && job->stream.data[start] == value;
+}
+
 static uint64_t fnv1a64(const uint8_t *data, size_t len)
 {
     uint64_t hash = UINT64_C(14695981039346656037);
@@ -333,7 +341,7 @@ static void test_p710_regression_and_p900_offset(void)
                                             px, 7, 13, NULL, &p710_job));
     assert(p710_job.stream.len == 353);
     assert(fnv1a64(p710_job.stream.data, p710_job.stream.len) ==
-           UINT64_C(0x58ab235c437ab2e6));
+           UINT64_C(0x234c17804d84476e));
     static const size_t p710_command_ends[] = {
         102, 106, 110, 123, 127, 131, 136, 138,
     };
@@ -362,8 +370,29 @@ static void test_p710_regression_and_p900_offset(void)
     ptouch_buf_init(&legacy);
     assert(ptouch_print_build_stream(px, 7, 13, &opts, &legacy));
     assert(legacy.len == 353);
-    assert(fnv1a64(legacy.data, legacy.len) == UINT64_C(0x58ab235c437ab2e6));
+    assert(fnv1a64(legacy.data, legacy.len) == UINT64_C(0x234c17804d84476e));
     ptouch_buf_free(&legacy);
+
+    /* The required trailing feed is included in, rather than added to, the
+     * minimum cut whitespace. A 100-dot short label therefore gets 37 blank
+     * rows on each side within the P710's 174-dot minimum. */
+    uint8_t short_px[100];
+    memset(short_px, 1, sizeof short_px);
+    ptouch_print_job_init(&p710_job);
+    assert(ptouch_print_opts_init(ptouch_model_p710bt(), 12, &opts));
+    assert(ptouch_print_build_job_for_model(ptouch_model_p710bt(),
+                                            short_px, 100, 1, &opts,
+                                            &p710_job));
+    const size_t p710_setup_frames = 8;
+    for (size_t i = 0; i < 37; ++i) {
+        assert(frame_is_byte(&p710_job, p710_setup_frames + i, 0x5A));
+    }
+    assert(!frame_is_byte(&p710_job, p710_setup_frames + 37, 0x5A));
+    for (size_t i = 0; i < 37; ++i) {
+        assert(frame_is_byte(&p710_job,
+                             p710_setup_frames + 37 + 100 + i, 0x5A));
+    }
+    ptouch_print_job_free(&p710_job);
 
     opts = PTOUCH_PRINT_OPTS_DEFAULT();
     opts.chain = true;

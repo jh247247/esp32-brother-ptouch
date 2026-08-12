@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Center short labels using the full minimum-cut whitespace while treating the
+  required trailing feed as part of that whitespace.
+
 ## 0.2.0-beta.1 - 2026-07-22
 
 - Add a fail-closed catalog of 23 Brother P-touch raster recipes.
