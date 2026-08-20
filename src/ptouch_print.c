@@ -173,11 +173,16 @@ bool ptouch_print_build_job_for_model(
     int logical_lead = 0;
     int logical_tail = o.chain ? 0 : o.trailing_pad_dots;
     if (!o.chain && o.min_length_dots > 0) {
-        if (w > INT_MAX - logical_tail) return false;
-        int shortfall = o.min_length_dots - (w + logical_tail);
-        if (shortfall > 0) {
-            logical_lead = shortfall / 2;
-            logical_tail += shortfall - logical_lead;
+        int total_blank = o.min_length_dots - w;
+        if (total_blank > logical_tail) {
+            /* trailing_pad_dots is part of the available right whitespace,
+             * not extra space to add before centering. Count it inside the
+             * minimum so short artwork is centered in the physical cut. */
+            logical_tail = (total_blank + 1) / 2;
+            if (logical_tail < o.trailing_pad_dots) {
+                logical_tail = o.trailing_pad_dots;
+            }
+            logical_lead = total_blank - logical_tail;
         }
     }
     if (logical_lead > INT_MAX / pad_scale ||

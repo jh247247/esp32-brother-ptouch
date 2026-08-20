@@ -34,6 +34,14 @@ static size_t count_exact_frames(const ptouch_print_job_t *job,
     return count;
 }
 
+static bool frame_is_byte(const ptouch_print_job_t *job, size_t index,
+                          uint8_t value)
+{
+    size_t start = index ? job->frame_ends[index - 1] : 0;
+    size_t end = job->frame_ends[index];
+    return end == start + 1 && job->stream.data[start] == value;
+}
+
 static uint64_t fnv1a64(const uint8_t *data, size_t len)
 {
     uint64_t hash = UINT64_C(14695981039346656037);
@@ -200,29 +208,42 @@ static void test_pt1950_job(void)
     ptouch_print_job_free(&job);
 
     /* The real local-print path must not duplicate the PT-1950's fixed
-     * head-to-cutter leader with a synthetic raster-length floor. */
+     * head-to-cutter leader with a synthetic raster-length floor. It does add
+     * a 24-dot trailing guard so the full cutter cannot clip the last glyph. */
     assert(profile->minimum_cut_dots_180 == 0);
-    static uint8_t physical_retry[170 * 76];
+    assert(profile->trailing_pad_dots_180 == 24);
+    /* Match the 223x76 LOCAL PRINT OK field failure. */
+    static uint8_t physical_retry[223 * 76];
     ptouch_print_job_init(&job);
-    assert(ptouch_print_build_job_for_model(profile, physical_retry, 168, 76,
+    assert(ptouch_print_build_job_for_model(profile, physical_retry, 223, 76,
                                             NULL, &job));
-    assert(job.frame_count == 173); /* four setup + 168 raster + final feed */
+    assert(job.frame_count == 252); /* four setup + 223 raster + 24 guard + final feed */
     ptouch_print_job_free(&job);
 
-    physical_retry[0 * 170 + 0] = 1;
-    physical_retry[17 * 170 + 0] = 1;
-    physical_retry[7 * 170 + 1] = 1;
-    physical_retry[33 * 170 + 1] = 1;
+    physical_retry[0 * 223 + 0] = 1;
+    physical_retry[17 * 223 + 0] = 1;
+    physical_retry[7 * 223 + 1] = 1;
+    physical_retry[33 * 223 + 1] = 1;
+    physical_retry[50 * 223 + 222] = 1;
     ptouch_print_job_init(&job);
-    assert(ptouch_print_build_job_for_model(profile, physical_retry, 170, 76,
+    assert(ptouch_print_build_job_for_model(profile, physical_retry, 223, 76,
                                             NULL, &job));
-    assert(job.frame_count == 175);
+    assert(job.frame_count == 252);
     uint8_t unpadded[14] = {0};
     decode_raster_frame(&job, 4, unpadded, sizeof unpadded);
     assert_only_bytes(unpadded, sizeof unpadded, 2, 0x20, 4, 0x10);
     memset(unpadded, 0, sizeof unpadded);
     decode_raster_frame(&job, 5, unpadded, sizeof unpadded);
     assert_only_bytes(unpadded, sizeof unpadded, 3, 0x40, 6, 0x10);
+    memset(unpadded, 0, sizeof unpadded);
+    decode_raster_frame(&job, 4 + 222, unpadded, sizeof unpadded);
+    assert_only_bytes(unpadded, sizeof unpadded, 8, 0x08, 0, 0);
+    for (size_t i = 0; i < 24; ++i) {
+        memset(unpadded, 0xFF, sizeof unpadded);
+        decode_raster_frame(&job, 4 + 223 + i, unpadded, sizeof unpadded);
+        assert_only_bytes(unpadded, sizeof unpadded, 0, 0, 0, 0);
+    }
+    assert(frame_is_byte(&job, 4 + 223 + 24, PTOUCH_PRINT_FEED));
     assert(job.stream.data[job.stream.len - 1] == PTOUCH_PRINT_FEED);
     ptouch_print_job_free(&job);
 
@@ -333,7 +354,7 @@ static void test_p710_regression_and_p900_offset(void)
                                             px, 7, 13, NULL, &p710_job));
     assert(p710_job.stream.len == 353);
     assert(fnv1a64(p710_job.stream.data, p710_job.stream.len) ==
-           UINT64_C(0x58ab235c437ab2e6));
+           UINT64_C(0x234c17804d84476e));
     static const size_t p710_command_ends[] = {
         102, 106, 110, 123, 127, 131, 136, 138,
     };
@@ -362,8 +383,29 @@ static void test_p710_regression_and_p900_offset(void)
     ptouch_buf_init(&legacy);
     assert(ptouch_print_build_stream(px, 7, 13, &opts, &legacy));
     assert(legacy.len == 353);
-    assert(fnv1a64(legacy.data, legacy.len) == UINT64_C(0x58ab235c437ab2e6));
+    assert(fnv1a64(legacy.data, legacy.len) == UINT64_C(0x234c17804d84476e));
     ptouch_buf_free(&legacy);
+
+    /* The required trailing feed is included in, rather than added to, the
+     * minimum cut whitespace. A 100-dot short label therefore gets 37 blank
+     * rows on each side within the P710's 174-dot minimum. */
+    uint8_t short_px[100];
+    memset(short_px, 1, sizeof short_px);
+    ptouch_print_job_init(&p710_job);
+    assert(ptouch_print_opts_init(ptouch_model_p710bt(), 12, &opts));
+    assert(ptouch_print_build_job_for_model(ptouch_model_p710bt(),
+                                            short_px, 100, 1, &opts,
+                                            &p710_job));
+    const size_t p710_setup_frames = 8;
+    for (size_t i = 0; i < 37; ++i) {
+        assert(frame_is_byte(&p710_job, p710_setup_frames + i, 0x5A));
+    }
+    assert(!frame_is_byte(&p710_job, p710_setup_frames + 37, 0x5A));
+    for (size_t i = 0; i < 37; ++i) {
+        assert(frame_is_byte(&p710_job,
+                             p710_setup_frames + 37 + 100 + i, 0x5A));
+    }
+    ptouch_print_job_free(&p710_job);
 
     opts = PTOUCH_PRINT_OPTS_DEFAULT();
     opts.chain = true;
@@ -569,7 +611,7 @@ static void test_every_recipe_builds_with_profile_defaults(void)
         ptouch_model_lookup(PTOUCH_BROTHER_VID, 0x2019);
     ptouch_print_opts_t legacy;
     assert(ptouch_print_opts_init(pt1950, 12, &legacy));
-    assert(legacy.trailing_pad_dots == 0 && legacy.min_length_dots == 0);
+    assert(legacy.trailing_pad_dots == 24 && legacy.min_length_dots == 0);
     assert(!ptouch_print_opts_init(pt1950, 24, &legacy));
 }
 

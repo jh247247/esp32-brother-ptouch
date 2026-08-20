@@ -102,10 +102,11 @@ static const ptouch_model_profile_t s_profiles[] = {
       .mode_feed_code = 0x02, .emit_no_chain_mode = true,
       .mode_before_compression = true,
       .completion_validated = false, .chain_validated = false,
-      /* The PT-1950 supplies its own fixed head-to-cutter leader.  Adding a
-       * synthetic one-inch raster floor duplicates that feed and lengthens
-       * every short label; keep the raster at the rendered artwork length. */
-      .minimum_cut_dots_180 = 0,
+      /* The PT-1950 supplies its own fixed head-to-cutter leader, so it does
+       * not need a synthetic one-inch raster floor.  It does need a small
+       * trailing guard: without one, ordinary text can reach the final raster
+       * row and the full cutter can clip the last glyph. */
+      .minimum_cut_dots_180 = 0, .trailing_pad_dots_180 = 24,
       .expected_status_model = 0x35,
       .tape_width_mask = PTOUCH_TAPE_WIDTHS_18 & ~PTOUCH_TAPE_WIDTH_4,
       .limitation =
