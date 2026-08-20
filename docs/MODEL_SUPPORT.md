@@ -82,6 +82,10 @@ Evidence captured against the final command recipe:
    its manual cut guide about 24 mm from the leading edge, matching the fixed
    head-to-cutter leader. No synthetic raster-length floor is added; the prior
    180-dot padding produced an approximately 46 mm strip and wasted about 9 mm.
+   A later ordinary-text print exposed that artwork ending at the final raster
+   row can reach the full cutter. The profile therefore reserves a 24-dot
+   (3.4 mm) trailing guard after the rendered artwork; physical acceptance of
+   that guard remains required before this result is classified as validated.
 5. Passive status was idle `0x00`, printing phase `0x06`, then completion
    `0x01`. That nominal sequence is not sufficient to distinguish current-job
    physical success from stale or merely submitted output, so

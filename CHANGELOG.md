@@ -4,6 +4,8 @@
 
 - Center short labels using the full minimum-cut whitespace while treating the
   required trailing feed as part of that whitespace.
+- Reserve a 24-dot PT-1950 trailing guard between the final artwork row and
+  full-cutter command without restoring the wasteful one-inch raster floor.
 
 ## 0.2.0-beta.1 - 2026-07-22
 

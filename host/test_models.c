@@ -208,29 +208,42 @@ static void test_pt1950_job(void)
     ptouch_print_job_free(&job);
 
     /* The real local-print path must not duplicate the PT-1950's fixed
-     * head-to-cutter leader with a synthetic raster-length floor. */
+     * head-to-cutter leader with a synthetic raster-length floor. It does add
+     * a 24-dot trailing guard so the full cutter cannot clip the last glyph. */
     assert(profile->minimum_cut_dots_180 == 0);
-    static uint8_t physical_retry[170 * 76];
+    assert(profile->trailing_pad_dots_180 == 24);
+    /* Match the 223x76 LOCAL PRINT OK field failure. */
+    static uint8_t physical_retry[223 * 76];
     ptouch_print_job_init(&job);
-    assert(ptouch_print_build_job_for_model(profile, physical_retry, 168, 76,
+    assert(ptouch_print_build_job_for_model(profile, physical_retry, 223, 76,
                                             NULL, &job));
-    assert(job.frame_count == 173); /* four setup + 168 raster + final feed */
+    assert(job.frame_count == 252); /* four setup + 223 raster + 24 guard + final feed */
     ptouch_print_job_free(&job);
 
-    physical_retry[0 * 170 + 0] = 1;
-    physical_retry[17 * 170 + 0] = 1;
-    physical_retry[7 * 170 + 1] = 1;
-    physical_retry[33 * 170 + 1] = 1;
+    physical_retry[0 * 223 + 0] = 1;
+    physical_retry[17 * 223 + 0] = 1;
+    physical_retry[7 * 223 + 1] = 1;
+    physical_retry[33 * 223 + 1] = 1;
+    physical_retry[50 * 223 + 222] = 1;
     ptouch_print_job_init(&job);
-    assert(ptouch_print_build_job_for_model(profile, physical_retry, 170, 76,
+    assert(ptouch_print_build_job_for_model(profile, physical_retry, 223, 76,
                                             NULL, &job));
-    assert(job.frame_count == 175);
+    assert(job.frame_count == 252);
     uint8_t unpadded[14] = {0};
     decode_raster_frame(&job, 4, unpadded, sizeof unpadded);
     assert_only_bytes(unpadded, sizeof unpadded, 2, 0x20, 4, 0x10);
     memset(unpadded, 0, sizeof unpadded);
     decode_raster_frame(&job, 5, unpadded, sizeof unpadded);
     assert_only_bytes(unpadded, sizeof unpadded, 3, 0x40, 6, 0x10);
+    memset(unpadded, 0, sizeof unpadded);
+    decode_raster_frame(&job, 4 + 222, unpadded, sizeof unpadded);
+    assert_only_bytes(unpadded, sizeof unpadded, 8, 0x08, 0, 0);
+    for (size_t i = 0; i < 24; ++i) {
+        memset(unpadded, 0xFF, sizeof unpadded);
+        decode_raster_frame(&job, 4 + 223 + i, unpadded, sizeof unpadded);
+        assert_only_bytes(unpadded, sizeof unpadded, 0, 0, 0, 0);
+    }
+    assert(frame_is_byte(&job, 4 + 223 + 24, PTOUCH_PRINT_FEED));
     assert(job.stream.data[job.stream.len - 1] == PTOUCH_PRINT_FEED);
     ptouch_print_job_free(&job);
 
@@ -598,7 +611,7 @@ static void test_every_recipe_builds_with_profile_defaults(void)
         ptouch_model_lookup(PTOUCH_BROTHER_VID, 0x2019);
     ptouch_print_opts_t legacy;
     assert(ptouch_print_opts_init(pt1950, 12, &legacy));
-    assert(legacy.trailing_pad_dots == 0 && legacy.min_length_dots == 0);
+    assert(legacy.trailing_pad_dots == 24 && legacy.min_length_dots == 0);
     assert(!ptouch_print_opts_init(pt1950, 24, &legacy));
 }
 
