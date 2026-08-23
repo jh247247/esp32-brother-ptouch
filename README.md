@@ -15,8 +15,8 @@ more conservative than recipe availability.
 
 - **PT-P710BT:** hardware-validated print, cut, completion, hot-plug, and
   five-label batching.
-- **PT-1950:** inspected single-label output, orientation, length, text, and
-  automatic cut. Completion remains inspection-gated; chaining is unavailable.
+- **PT-1950:** hardware-validated output, automatic cut, completion, and
+  three-label chained printing.
 - **21 additional models:** host-tested experimental recipes. They are refused
   by default and require explicit `allow_experimental_profiles` opt-in.
 

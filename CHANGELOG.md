@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Hardware-validate PT-1950 completion and three-label chained printing.
+- Preserve an exclusive open-chain transport state between segments and
+  quarantine failed continuations.
+
 ## 0.2.0-beta.1 - 2026-07-22
 
 - Add a fail-closed catalog of 23 Brother P-touch raster recipes.

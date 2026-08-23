@@ -1,5 +1,5 @@
 version: "0.2.0-beta.1"
-description: "Fail-closed Brother P-touch raster driver for ESP32-S3 USB host. P710BT validated; PT-1950 inspected; 21 opt-in recipes."
+description: "Fail-closed Brother P-touch raster driver for ESP32-S3 USB host. P710BT and PT-1950 validated; 21 opt-in recipes."
 url: "https://github.com/jh247247/esp32-brother-ptouch"
 repository: "https://github.com/jh247247/esp32-brother-ptouch.git"
 license: "Apache-2.0"

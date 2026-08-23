@@ -37,6 +37,13 @@ bitmap = section("ptouch_usb_print_result_t ptouch_usb_print_bitmap(",
                  "static const char *status_txn_locked")
 assert "!opts" in bitmap
 
+structured_print = section("ptouch_usb_print_result_t ptouch_usb_print_job_and_wait(",
+                           "ptouch_usb_print_result_t ptouch_usb_print_bitmap(")
+assert "continuing_chain = s_chain_pending" in structured_print
+assert "if (!continuing_chain)" in structured_print
+assert "s_chain_pending = job->chain" in structured_print
+assert "result.stream_submitted || continuing_chain" in structured_print
+
 start = SOURCE[SOURCE.index("esp_err_t ptouch_usb_start"):]
 assert "ESP_ERR_INVALID_STATE" in start
 assert "s_start_called" in start
