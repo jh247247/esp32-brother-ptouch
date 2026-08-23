@@ -23,7 +23,7 @@ preflight until they have their own validated recipes.
 | `2004` | PT-2300 | 112 at 180 dpi | 6, 9, 12, 18, 24 | legacy + PackBits | experimental recipe; explicit opt-in |
 | `2007` | PT-2420PC | 128 at 180 dpi | 6, 9, 12, 18, 24 | legacy + PackBits | experimental recipe; explicit opt-in |
 | `2011` | PT-2450PC / PT-2450DX | 128 at 180 dpi | 6, 9, 12, 18, 24 | legacy + PackBits | experimental recipe; explicit opt-in |
-| `2019` | PT-1950 | 112 at 180 dpi | 6, 9, 12, 18 | Brother-default implicit + PackBits, framed | inspected hardware output and cut; completion inspection-gated; chaining unavailable |
+| `2019` | PT-1950 | 112 at 180 dpi | 6, 9, 12, 18 | Brother-default implicit + PackBits, framed | hardware-validated output, cut, completion, and three-label chaining |
 | `201F` | PT-2700 | 128 at 180 dpi | 3.5, 6, 9, 12, 18, 24 | legacy raw | experimental recipe; explicit opt-in |
 | `202C` | PT-1230PC | 128 at 180 dpi | 3.5, 6, 9, 12 | legacy raw | experimental recipe; explicit opt-in |
 | `202D` | PT-2430PC | 128 at 180 dpi | 3.5, 6, 9, 12, 18, 24 | legacy raw | experimental recipe; explicit opt-in |
@@ -49,7 +49,7 @@ their stated evidence tiers. The other 21 are refused unless
 validated completion returns `PTOUCH_USB_COMPLETION_UNVALIDATED` after nominal
 completion, latches the output quarantine, and requires physical inspection.
 Applications must not retry a result with `stream_submitted=true`. Chaining
-currently remains PT-P710BT-only.
+is hardware-validated for PT-P710BT and PT-1950.
 
 ## Recognized but refused
 
@@ -65,8 +65,7 @@ currently remains PT-P710BT-only.
 ## PT-1950 acceptance
 
 PT-1950 is the first non-P710 physical acceptance target. It is validated for
-inspected, single-label output and cutting. Completion and batch chaining
-deliberately remain unvalidated.
+single-label output, cutting, completion, and batch chaining.
 
 Evidence captured against the final command recipe:
 
@@ -83,17 +82,19 @@ Evidence captured against the final command recipe:
    head-to-cutter leader. No synthetic raster-length floor is added; the prior
    180-dot padding produced an approximately 46 mm strip and wasted about 9 mm.
 5. Passive status was idle `0x00`, printing phase `0x06`, then completion
-   `0x01`. That nominal sequence is not sufficient to distinguish current-job
-   physical success from stale or merely submitted output, so
-   `completion_validated` remains false.
-6. Each provisional completion was physically inspected and confirmed through
+   `0x01`. Each provisional completion was physically inspected and confirmed through
    the purpose-bound web action. A fresh idle status and subsequent preflight
    succeeded after clearing the durable hold.
+6. A three-label `1`, `2`, `3` batch printed in order on one strip with no
+   intermediate cuts and one final automatic cut. A chained segment leaves the
+   printer intentionally non-idle, so the driver carries an exclusive open-chain
+   state into the next generation-matched job instead of issuing a destructive
+   between-label status preflight.
 
 The PT-1950 has only a full cutter. Keeping individual auto-cut enabled also
 keeps the narrow-margin `:` guide; suppressing the guide would disable the
-requested cut behavior. Consecutive-label optimization remains unavailable
-until this model has a separately proven chaining recipe.
+requested cut behavior. Chained jobs suppress intermediate feed/cut commands
+and retain the full cutter for the final segment.
 
 ## Sources and test contract
 

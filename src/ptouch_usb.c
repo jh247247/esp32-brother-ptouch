@@ -55,6 +55,10 @@ static volatile int s_new_dev_addr_pending = -1;
 static bool s_status_app_blocked;
 static bool s_output_quarantined;
 static bool s_transport_faulted;
+/* A successful chain command deliberately leaves the printer non-idle.  No
+ * status transaction may reset that state; only the next generation-matched
+ * raster job may consume it. Guarded by s_io_mtx. */
+static bool s_chain_pending;
 static SemaphoreHandle_t s_io_mtx;
 static SemaphoreHandle_t s_cache_mtx;
 static ptouch_status_t s_status_cache;
@@ -119,7 +123,8 @@ static bool status_commands_blocked_locked(void)
 {
     taskENTER_CRITICAL(&s_gate_lock);
     bool blocked =
-        s_status_app_blocked || s_output_quarantined || s_transport_faulted;
+        s_status_app_blocked || s_output_quarantined || s_transport_faulted ||
+        s_chain_pending;
     taskEXIT_CRITICAL(&s_gate_lock);
     return blocked;
 }
@@ -725,6 +730,7 @@ ptouch_usb_print_result_t ptouch_usb_print_job_and_wait(
         .transfer_rc = PTOUCH_USB_TRANSFER_INVALID_ARGUMENT,
         .completion_rc = PTOUCH_USB_COMPLETION_NOT_RUN,
     };
+    bool continuing_chain = false;
     if (!s_io_mtx || !ptouch_print_job_frames_valid(job)) return result;
 
     xSemaphoreTake(s_io_mtx, portMAX_DELAY);
@@ -732,7 +738,14 @@ ptouch_usb_print_result_t ptouch_usb_print_job_and_wait(
         result.transfer_rc = PTOUCH_USB_TRANSFER_TRANSPORT_FAULT;
         goto done;
     }
-    if (status_commands_blocked_locked()) {
+    /* A pending chain blocks observers, but is the expected entry state for
+     * its continuation. The other safety gates still apply. */
+    continuing_chain = s_chain_pending;
+    taskENTER_CRITICAL(&s_gate_lock);
+    bool output_blocked = s_status_app_blocked || s_output_quarantined ||
+                          s_transport_faulted;
+    taskEXIT_CRITICAL(&s_gate_lock);
+    if (output_blocked) {
         result.transfer_rc = PTOUCH_USB_TRANSFER_BLOCKED;
         goto done;
     }
@@ -754,18 +767,21 @@ ptouch_usb_print_result_t ptouch_usb_print_job_and_wait(
         goto done;
     }
 
-    ptouch_status_t preflight;
-    const char *preflight_error = status_txn_locked(&preflight, false);
-    result.has_status = preflight.valid;
-    if (preflight.valid) result.status = preflight;
+    ptouch_status_t preflight = {0};
+    const char *preflight_error = NULL;
+    if (!continuing_chain) {
+        preflight_error = status_txn_locked(&preflight, false);
+        result.has_status = preflight.valid;
+        if (preflight.valid) result.status = preflight;
+    }
 
     ptouch_media_geometry_t geometry;
-    bool media_ok = preflight.valid &&
+    bool media_ok = continuing_chain || (preflight.valid &&
         preflight.media_width_mm == job->tape_mm &&
         ptouch_model_accepts_media(s_profile, preflight.media_width_mm,
                                    preflight.media_type) &&
-        ptouch_media_geometry(s_profile, preflight.media_width_mm, &geometry);
-    bool model_ok = !s_profile->expected_status_model ||
+        ptouch_media_geometry(s_profile, preflight.media_width_mm, &geometry));
+    bool model_ok = continuing_chain || !s_profile->expected_status_model ||
                     preflight.model == s_profile->expected_status_model;
     if (s_dev_gone_pending) {
         result.transfer_rc = PTOUCH_USB_TRANSFER_NOT_ATTACHED;
@@ -776,7 +792,7 @@ ptouch_usb_print_result_t ptouch_usb_print_job_and_wait(
         result.transfer_rc = PTOUCH_USB_TRANSFER_TARGET_CHANGED;
         goto done;
     }
-    if (preflight_error || !ptouch_status_is_idle_ready(&preflight) ||
+    if (preflight_error || (!continuing_chain && !ptouch_status_is_idle_ready(&preflight)) ||
         !media_ok || !model_ok) {
         result.transfer_rc = PTOUCH_USB_TRANSFER_PREFLIGHT_FAILED;
         goto done;
@@ -795,13 +811,21 @@ ptouch_usb_print_result_t ptouch_usb_print_job_and_wait(
             !s_profile->completion_validated) {
             result.completion_rc = PTOUCH_USB_COMPLETION_UNVALIDATED;
         }
+        if (result.completion_rc == PTOUCH_USB_COMPLETION_OK) {
+            taskENTER_CRITICAL(&s_gate_lock);
+            s_chain_pending = job->chain;
+            taskEXIT_CRITICAL(&s_gate_lock);
+        }
     }
 
 done:
-    if (result.stream_submitted &&
+    if ((result.stream_submitted || continuing_chain) &&
         (result.transfer_rc != PTOUCH_USB_TRANSFER_OK ||
          result.completion_rc != PTOUCH_USB_COMPLETION_OK)) {
         quarantine_output();
+        taskENTER_CRITICAL(&s_gate_lock);
+        s_chain_pending = false;
+        taskEXIT_CRITICAL(&s_gate_lock);
     }
     xSemaphoreGive(s_io_mtx);
     return result;

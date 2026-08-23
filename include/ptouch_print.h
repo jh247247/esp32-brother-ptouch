@@ -51,6 +51,7 @@ typedef struct ptouch_print_job {
     size_t frame_capacity;
     const ptouch_model_profile_t *profile;
     int tape_mm;
+    bool chain;               /* leaves the physical strip open for the next job */
     uint32_t attachment_generation;
 } ptouch_print_job_t;
 

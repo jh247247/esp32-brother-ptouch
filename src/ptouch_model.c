@@ -88,7 +88,7 @@ static const ptouch_model_profile_t s_profiles[] = {
                    PTOUCH_TAPE_WIDTHS_24 & ~PTOUCH_TAPE_WIDTH_4,
                    "3.5 mm media reports as 6 mm"),
     { .vid = PTOUCH_BROTHER_VID, .pid = 0x2019, .name = "PT-1950",
-      .support = PTOUCH_SUPPORT_OUTPUT_INSPECTED,
+      .support = PTOUCH_SUPPORT_HARDWARE_VALIDATED,
       .head_dots = 112, .head_dpi = 180, .feed_dpi = 180,
       .raster_select = PTOUCH_RASTER_IMPLICIT,
       .encoding = PTOUCH_ENCODING_PACKBITS,
@@ -101,15 +101,16 @@ static const ptouch_model_profile_t s_profiles[] = {
        * and explicitly disables chain: ESC i M 42, then ESC i K 08. */
       .mode_feed_code = 0x02, .emit_no_chain_mode = true,
       .mode_before_compression = true,
-      .completion_validated = false, .chain_validated = false,
-      /* The PT-1950 supplies its own fixed head-to-cutter leader.  Adding a
-       * synthetic one-inch raster floor duplicates that feed and lengthens
-       * every short label; keep the raster at the rendered artwork length. */
-      .minimum_cut_dots_180 = 0,
+      .completion_validated = true, .chain_validated = true,
+      /* The PT-1950 supplies its own fixed head-to-cutter leader, so it does
+       * not need a synthetic one-inch raster floor.  It does need a small
+       * trailing guard: without one, ordinary text can reach the final raster
+       * row and the full cutter can clip the last glyph. */
+      .minimum_cut_dots_180 = 0, .trailing_pad_dots_180 = 24,
       .expected_status_model = 0x35,
       .tape_width_mask = PTOUCH_TAPE_WIDTHS_18 & ~PTOUCH_TAPE_WIDTH_4,
       .limitation =
-          "18 mm maximum; a manual cut guide appears about 24 mm from the leading edge; automatic completion requires inspection; batch chaining is unavailable" },
+          "18 mm maximum; a manual cut guide appears about 24 mm from the leading edge" },
     LEGACY_RAW(0x201F, "PT-2700", true, NULL),
     PROFILE_WIDTHS(0x202C, "PT-1230PC", 128, 180,
                    PTOUCH_RASTER_LEGACY_R, PTOUCH_ENCODING_RAW,
